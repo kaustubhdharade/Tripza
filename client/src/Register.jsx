@@ -59,7 +59,7 @@ function Register({ onNavigateHome, onNavigateLogin }) {
         try {
           data = JSON.parse(responseText);
         } catch (parseErr) {
-          console.error("Failed to parse response JSON:", responseText);
+          console.error("Failed to parse response JSON:", responseText, parseErr);
         }
       }
 

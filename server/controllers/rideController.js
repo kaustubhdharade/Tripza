@@ -356,6 +356,7 @@ const getActivePoolRides = async (req, res) => {
       status: 'active'
     })
       .populate('driver', 'name email')
+      .populate('passengers.user', 'name email')
       .sort({ createdAt: -1 });
 
     if (hasPassengerCoords) {
@@ -427,7 +428,28 @@ const getActivePoolRides = async (req, res) => {
         availableSeats,
         status: ride.status,
         createdAt: ride.createdAt,
-        fareBreakdown
+        fareBreakdown,
+        segments: ride.segmentsBreakdown || [],
+        driverIncentive: ride.driverIncentive || 0,
+        driverEarnings: ride.driverEarnings || 0,
+        passengers: ride.passengers
+          ? ride.passengers.map(p => ({
+              user: p.user
+                ? {
+                    id: p.user._id || p.user.id || p.user,
+                    name: p.user.name || 'Passenger',
+                    email: p.user.email || ''
+                  }
+                : null,
+              pickup: p.pickup,
+              destination: p.destination,
+              fare: p.fare,
+              fareBreakdown: p.fareBreakdown,
+              detourKm: p.detourKm || 0,
+              detourCost: p.detourCost || 0,
+              joinedAt: p.joinedAt
+            }))
+          : []
       };
     });
 

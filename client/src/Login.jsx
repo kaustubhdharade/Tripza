@@ -46,7 +46,7 @@ function Login({ onNavigateHome, onNavigateRegister, onLoginSuccess }) {
         try {
           data = JSON.parse(responseText);
         } catch (parseErr) {
-          console.error("Failed to parse login response JSON:", responseText);
+          console.error("Failed to parse login response JSON:", responseText, parseErr);
         }
       }
 
