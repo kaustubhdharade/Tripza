@@ -1,3 +1,54 @@
+const PUNE_LOCATIONS = {
+  coep: { address: 'COEP Technological University, Pune', latitude: 18.5293, longitude: 73.8565 },
+  shivajinagar: { address: 'Shivajinagar Railway Station, Pune', latitude: 18.5314, longitude: 73.8446 },
+  swargate: { address: 'Swargate Bus Stand, Pune', latitude: 18.5018, longitude: 73.8636 },
+  'pune station': { address: 'Pune Junction Railway Station', latitude: 18.5289, longitude: 73.8744 },
+  hinjewadi: { address: 'Hinjewadi IT Park, Pune', latitude: 18.5912, longitude: 73.7389 },
+  kothrud: { address: 'Kothrud, Pune', latitude: 18.5074, longitude: 73.8077 },
+  'viman nagar': { address: 'Viman Nagar, Pune', latitude: 18.5679, longitude: 73.9143 },
+  baner: { address: 'Baner, Pune', latitude: 18.5590, longitude: 73.7868 },
+  katraj: { address: 'Katraj, Pune', latitude: 18.4575, longitude: 73.8508 },
+  hadapsar: { address: 'Hadapsar, Pune', latitude: 18.5089, longitude: 73.9260 },
+  airport: { address: 'Pune International Airport', latitude: 18.5822, longitude: 73.9197 }
+};
+
+function getFallbackLocation(addressStr) {
+  const query = addressStr.toLowerCase().trim();
+  for (const key of Object.keys(PUNE_LOCATIONS)) {
+    if (query.includes(key)) {
+      return PUNE_LOCATIONS[key];
+    }
+  }
+  let hash = 0;
+  for (let i = 0; i < query.length; i++) {
+    hash = (hash << 5) - hash + query.charCodeAt(i);
+    hash |= 0;
+  }
+  const latOffset = ((Math.abs(hash) % 100) - 50) / 1000;
+  const lngOffset = ((Math.abs(hash >> 3) % 100) - 50) / 1000;
+  return {
+    address: addressStr.trim(),
+    latitude: Math.round((18.5204 + latOffset) * 10000) / 10000,
+    longitude: Math.round((73.8567 + lngOffset) * 10000) / 10000
+  };
+}
+
+function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) *
+      Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const directDist = R * c;
+  const roadDist = Math.max(1, Math.round(directDist * 1.3 * 10) / 10);
+  return roadDist;
+}
+
 const geocodeLocation = async (req, res) => {
   const { address } = req.body;
 
@@ -11,9 +62,12 @@ const geocodeLocation = async (req, res) => {
 
   const apiKey = process.env.ORS_API_KEY;
   if (!apiKey || apiKey === 'your_openrouteservice_api_key') {
-    return res.status(500).json({
-      success: false,
-      message: 'OpenRouteService API key is not configured on the server'
+    // Fallback mode when ORS API key is not configured
+    const loc = getFallbackLocation(address);
+    return res.status(200).json({
+      success: true,
+      location: loc,
+      isFallback: true
     });
   }
 
@@ -22,9 +76,11 @@ const geocodeLocation = async (req, res) => {
     const response = await fetch(url);
     
     if (!response.ok) {
-      return res.status(response.status).json({
-        success: false,
-        message: `OpenRouteService API returned HTTP ${response.status}`
+      const loc = getFallbackLocation(address);
+      return res.status(200).json({
+        success: true,
+        location: loc,
+        isFallback: true
       });
     }
 
@@ -44,15 +100,19 @@ const geocodeLocation = async (req, res) => {
         }
       });
     } else {
-      return res.status(404).json({
-        success: false,
-        message: 'No results found for the provided address'
+      const loc = getFallbackLocation(address);
+      return res.status(200).json({
+        success: true,
+        location: loc,
+        isFallback: true
       });
     }
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: `Server Error: ${error.message}`
+    const loc = getFallbackLocation(address);
+    return res.status(200).json({
+      success: true,
+      location: loc,
+      isFallback: true
     });
   }
 };
@@ -87,11 +147,31 @@ const calculateRoute = async (req, res) => {
   }
 
   const apiKey = process.env.ORS_API_KEY;
-  if (!apiKey || apiKey === 'your_openrouteservice_api_key') {
-    return res.status(500).json({
-      success: false,
-      message: 'OpenRouteService API key is not configured on the server'
+
+  const fallbackRoute = () => {
+    const distanceInKm = calculateHaversineDistance(
+      pickup.latitude,
+      pickup.longitude,
+      destination.latitude,
+      destination.longitude
+    );
+    const durationInMins = Math.max(3, Math.round((distanceInKm / 30) * 60));
+    return res.status(200).json({
+      success: true,
+      distance: distanceInKm,
+      duration: durationInMins,
+      geometry: null,
+      route: {
+        distance: distanceInKm,
+        duration: durationInMins,
+        geometry: null
+      },
+      isFallback: true
     });
+  };
+
+  if (!apiKey || apiKey === 'your_openrouteservice_api_key') {
+    return fallbackRoute();
   }
 
   try {
@@ -111,19 +191,7 @@ const calculateRoute = async (req, res) => {
     });
 
     if (!response.ok) {
-      let errMsg = `OpenRouteService API returned HTTP ${response.status}`;
-      try {
-        const errorData = await response.json();
-        if (errorData.error && errorData.error.message) {
-          errMsg = `OpenRouteService Error: ${errorData.error.message}`;
-        }
-      } catch (e) {
-        // response is not json
-      }
-      return res.status(response.status).json({
-        success: false,
-        message: errMsg
-      });
+      return fallbackRoute();
     }
 
     const data = await response.json();
@@ -145,16 +213,10 @@ const calculateRoute = async (req, res) => {
         }
       });
     } else {
-      return res.status(404).json({
-        success: false,
-        message: 'No route found between the specified coordinates'
-      });
+      return fallbackRoute();
     }
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: `Server Error: ${error.message}`
-    });
+    return fallbackRoute();
   }
 };
 
@@ -162,5 +224,3 @@ module.exports = {
   geocodeLocation,
   calculateRoute
 };
-
-

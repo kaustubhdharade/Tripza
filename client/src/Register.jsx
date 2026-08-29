@@ -24,7 +24,7 @@ function Register({ onNavigateHome, onNavigateLogin }) {
     e.preventDefault();
 
     try {
-      const backendUrl = import.meta.env.VITE_Backend_API || 'http://localhost:5000';
+      const backendUrl = import.meta.env.VITE_Backend_API || '';
       console.log("Backend URL:", backendUrl);
 
       const response = await fetch(

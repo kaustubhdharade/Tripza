@@ -25,7 +25,7 @@ function Login({ onNavigateHome, onNavigateRegister, onLoginSuccess }) {
     setLoading(true);
 
     try {
-      const backendUrl = import.meta.env.VITE_Backend_API || 'http://localhost:5000';
+      const backendUrl = import.meta.env.VITE_Backend_API || '';
       const response = await fetch(
         `${backendUrl}/api/auth/login`,
         {

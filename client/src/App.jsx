@@ -838,7 +838,8 @@ function App() {
                       {(joinedPoolRide.passengerFare?.segmentsUsed || joinedPoolRide.segments).map((seg, idx) => {
                         const passCount = seg.passengersCount || seg.passengerCount || (seg.activePassengers ? seg.activePassengers.length : 1);
                         const segDist = seg.segmentDistanceKm;
-                        const segShare = seg.baseSharePerPassenger || seg.passengerShare || seg.segmentBaseFare;
+                        const segBaseShare = seg.baseSharePerPassenger ?? seg.passengerShare ?? seg.segmentBaseFare;
+                        const segIncentive = seg.incentivePerPassenger || 0;
 
                         return (
                           <div
@@ -855,8 +856,12 @@ function App() {
                               </div>
                             </div>
                             <div className="text-right">
-                              <div className="font-bold text-white">₹{segShare}</div>
-                              <div className="text-[9px] text-slate-500">share / person</div>
+                              <div className="font-bold text-white">₹{segBaseShare}</div>
+                              {segIncentive > 0 ? (
+                                <div className="text-[9px] text-emerald-400 font-medium">+₹{segIncentive} incentive</div>
+                              ) : (
+                                <div className="text-[9px] text-slate-500">share / person</div>
+                              )}
                             </div>
                           </div>
                         );
@@ -1130,7 +1135,7 @@ function App() {
                                   </div>
                                   <div>
                                     <p className="text-sm font-semibold text-white">
-                                      {ride.driver?.name || 'Driver Assigned'}
+                                      {ride.driver?.name || 'Driver Assigned'} {ride.driver?.email ? <span className="text-xs font-normal text-slate-400">({ride.driver.email})</span> : null}
                                     </p>
                                     <p className="text-[10px] text-slate-400">
                                       {ride.availableSeats} of {ride.maxPassengerCapacity || 5} seats available · {ride.currentPassengerCount} passenger(s)
@@ -1205,6 +1210,27 @@ function App() {
                                       <span className="font-bold">Save ₹{ride.fareBreakdown.savingsAmount} ({ride.fareBreakdown.savingsPercentage}% OFF)</span>
                                     </div>
                                   )}
+
+                                  <div className="pt-1 space-y-1 text-[11px] text-slate-400 border-t border-slate-800">
+                                    <div className="flex justify-between">
+                                      <span>Base Segment Share</span>
+                                      <span className="text-slate-200">₹{ride.fareBreakdown.baseShare}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span>Driver Incentive Contribution</span>
+                                      <span className="text-slate-200">₹{ride.fareBreakdown.driverIncentive}</span>
+                                    </div>
+                                    {ride.fareBreakdown.extraDetourCost > 0 && (
+                                      <div className="flex justify-between text-amber-400">
+                                        <span>Detour Cost ({ride.fareBreakdown.extraDistanceKm} km)</span>
+                                        <span>+₹{ride.fareBreakdown.extraDetourCost}</span>
+                                      </div>
+                                    )}
+                                    <div className="flex justify-between">
+                                      <span>Subtotal + GST (5%)</span>
+                                      <span className="text-slate-200">₹{ride.fareBreakdown.subtotal} + ₹{ride.fareBreakdown.gst}</span>
+                                    </div>
+                                  </div>
                                 </div>
                               )}
 

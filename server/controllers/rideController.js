@@ -401,6 +401,7 @@ const getActivePoolRides = async (req, res) => {
             pickup: ride.pickup,
             destination: ride.destination,
             distanceKm: ride.distanceKm,
+            fare: ride.fare,
             routeGeometry: ride.routeGeometry
           },
           allPassengers
