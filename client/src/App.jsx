@@ -66,6 +66,11 @@ function App() {
 
   const [startedPoolRide, setStartedPoolRide] = useState(null);
   const [startPoolLoading, setStartPoolLoading] = useState(false);
+  const [refreshingDriverRide, setRefreshingDriverRide] = useState(false);
+
+  const [confirmingPool, setConfirmingPool] = useState(false);
+  const [confirmedPoolBooking, setConfirmedPoolBooking] = useState(null);
+  const [confirmPoolError, setConfirmPoolError] = useState('');
 
   // Synchronize currentUser from localStorage
   const refreshCurrentUser = () => {
@@ -118,6 +123,40 @@ function App() {
       setPoolLoading(false);
     }
   }, [pickupLat, pickupLng, destinationLat, destinationLng]);
+
+  const fetchActiveDriverRide = useCallback(async () => {
+    if (!startedPoolRide) return;
+    setRefreshingDriverRide(true);
+    try {
+      const backendUrl = import.meta.env.VITE_Backend_API || '';
+      const token = localStorage.getItem('token');
+      if (!token) return;
+
+      const response = await axios.get(`${backendUrl}/api/rides/driver/active`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (response.data.success && response.data.ride) {
+        setStartedPoolRide(response.data.ride);
+      }
+    } catch (err) {
+      console.error('Fetch active driver ride error:', err);
+    } finally {
+      setRefreshingDriverRide(false);
+    }
+  }, [startedPoolRide]);
+
+  useEffect(() => {
+    let intervalId;
+    if (startedPoolRide) {
+      intervalId = setInterval(() => {
+        fetchActiveDriverRide();
+      }, 5000);
+    }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [startedPoolRide, fetchActiveDriverRide]);
 
   const handleJoinPoolRide = async (rideId) => {
     setBookingError('');
@@ -173,6 +212,48 @@ function App() {
       setBookingError(errMsg);
     } finally {
       setJoiningRideId(null);
+    }
+  };
+
+  const handleConfirmPoolRide = async () => {
+    if (!joinedPoolRide) return;
+    setConfirmPoolError('');
+    setConfirmingPool(true);
+
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setConfirmPoolError('Please log in to confirm your pool ride.');
+        setConfirmingPool(false);
+        return;
+      }
+
+      const backendUrl = import.meta.env.VITE_Backend_API || '';
+      const rideId = joinedPoolRide.id || joinedPoolRide._id;
+
+      const response = await axios.post(
+        `${backendUrl}/api/rides/pool/${rideId}/confirm`,
+        {
+          fareBreakdown: joinedPoolRide.passengerFare
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+
+      if (response.data.success) {
+        setConfirmedPoolBooking(response.data.confirmedBooking);
+      } else {
+        throw new Error(response.data.message || 'Failed to confirm pool ride');
+      }
+    } catch (err) {
+      console.error('Confirm pool ride error:', err);
+      const errMsg = err.response?.data?.message || err.message || 'Error confirming pool ride';
+      setConfirmPoolError(errMsg);
+    } finally {
+      setConfirmingPool(false);
     }
   };
 
@@ -355,6 +436,8 @@ function App() {
     setBookingSuccess(false);
     setJoinedPoolRide(null);
     setStartedPoolRide(null);
+    setConfirmedPoolBooking(null);
+    setConfirmPoolError('');
   };
 
   const handleConfirmRide = async () => {
@@ -544,9 +627,21 @@ function App() {
                     <span className="text-xs font-bold uppercase tracking-wider text-indigo-400">
                       Driver Earnings Dashboard
                     </span>
-                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded-full border border-emerald-500/30 uppercase">
-                      {startedPoolRide.status || 'ACTIVE'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={fetchActiveDriverRide}
+                        disabled={refreshingDriverRide}
+                        className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 flex items-center gap-1 cursor-pointer disabled:opacity-50 transition-all"
+                        title="Refresh Status"
+                      >
+                        <span className={`inline-block ${refreshingDriverRide ? 'animate-spin' : ''}`}>🔄</span>
+                        {refreshingDriverRide ? 'Refreshing...' : 'Refresh Status'}
+                      </button>
+                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded-full border border-emerald-500/30 uppercase">
+                        {startedPoolRide.status || 'ACTIVE'}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="flex justify-between text-xs text-slate-300">
@@ -599,12 +694,125 @@ function App() {
                   </div>
                 </div>
 
+                <div className="space-y-2.5">
+                  <button
+                    type="button"
+                    onClick={fetchActiveDriverRide}
+                    disabled={refreshingDriverRide}
+                    className="w-full py-3 px-4 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 font-semibold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {refreshingDriverRide ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                        Refreshing Status...
+                      </>
+                    ) : (
+                      <>
+                        <span>🔄</span>
+                        Refresh Driver Status (Auto-polling every 5s)
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleEditRide}
+                    className="w-full py-3.5 px-6 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-sm transition-all cursor-pointer"
+                  >
+                    Book / Offer Another Ride
+                  </button>
+                </div>
+              </div>
+            ) : confirmedPoolBooking ? (
+              /* ── Confirmed Pool Ride Receipt View (Phase B Receipt) ── */
+              <div className="py-2 space-y-5">
+                <div className="text-center">
+                  <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center text-3xl mx-auto mb-2">
+                    ✓
+                  </div>
+                  <h3 className="text-2xl font-bold text-white mb-1">Pool Ride Confirmed!</h3>
+                  <p className="text-slate-400 text-xs">
+                    Your pool ride booking snapshot is locked and confirmed.
+                  </p>
+                </div>
+
+                <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-5 space-y-3.5 text-xs shadow-xl text-left">
+                  <div className="flex justify-between items-center pb-2.5 border-b border-slate-800">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">
+                      Booking Receipt
+                    </span>
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-400 font-bold px-2.5 py-0.5 rounded-full border border-emerald-500/30 uppercase">
+                      {confirmedPoolBooking.status || 'CONFIRMED'}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between text-slate-300">
+                    <span className="text-slate-400">Driver</span>
+                    <span className="font-semibold text-white">
+                      {confirmedPoolBooking.driver?.name || 'Assigned Driver'} {confirmedPoolBooking.driver?.email ? `(${confirmedPoolBooking.driver.email})` : ''}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between text-slate-300">
+                    <span className="text-slate-400">Pickup</span>
+                    <span className="font-medium text-slate-200 truncate max-w-[220px]">
+                      {confirmedPoolBooking.pickup?.address || pickup}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between text-slate-300">
+                    <span className="text-slate-400">Destination</span>
+                    <span className="font-medium text-slate-200 truncate max-w-[220px]">
+                      {confirmedPoolBooking.destination?.address || destination}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between text-slate-300">
+                    <span className="text-slate-400">Trip Distance</span>
+                    <span className="font-medium text-white">
+                      {confirmedPoolBooking.distanceKm !== undefined ? `${typeof confirmedPoolBooking.distanceKm === 'number' ? confirmedPoolBooking.distanceKm.toFixed(1) : confirmedPoolBooking.distanceKm} km` : '—'}
+                    </span>
+                  </div>
+
+                  {confirmedPoolBooking.fareBreakdown && (
+                    <div className="space-y-1.5 pt-2 border-t border-slate-800/80 text-slate-400">
+                      <div className="flex justify-between">
+                        <span>Base / Common Segment Share</span>
+                        <span className="text-slate-200">₹{confirmedPoolBooking.fareBreakdown.baseShare}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Driver Incentive Contribution</span>
+                        <span className="text-slate-200">₹{confirmedPoolBooking.fareBreakdown.driverIncentive}</span>
+                      </div>
+                      {confirmedPoolBooking.fareBreakdown.extraDetourCost > 0 && (
+                        <div className="flex justify-between text-amber-400">
+                          <span>Extra Detour Cost</span>
+                          <span>+₹{confirmedPoolBooking.fareBreakdown.extraDetourCost}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span>Subtotal + GST (5%)</span>
+                        <span className="text-slate-200">₹{confirmedPoolBooking.fareBreakdown.subtotal} + ₹{confirmedPoolBooking.fareBreakdown.gst}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="h-px bg-slate-800 my-1" />
+
+                  <div className="flex justify-between items-center font-extrabold text-white text-base pt-1">
+                    <span>Final Locked Fare</span>
+                    <span className="text-emerald-400 text-2xl font-black">
+                      ₹{confirmedPoolBooking.finalFare}
+                    </span>
+                  </div>
+                </div>
+
                 <button
                   type="button"
                   onClick={handleEditRide}
                   className="w-full py-3.5 px-6 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-sm transition-all cursor-pointer"
                 >
-                  Book / Offer Another Ride
+                  Book Another Ride
                 </button>
               </div>
             ) : joinedPoolRide ? (
@@ -872,6 +1080,28 @@ function App() {
 
                 {/* Actions & Refresh */}
                 <div className="space-y-2.5 pt-2">
+                  {confirmPoolError && (
+                    <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs">
+                      {confirmPoolError}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleConfirmPoolRide}
+                    disabled={confirmingPool}
+                    className="w-full py-4 px-6 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-[0.99] transition-all font-bold text-white shadow-xl shadow-emerald-600/25 flex items-center justify-center gap-2 text-base cursor-pointer disabled:opacity-50"
+                  >
+                    {confirmingPool ? (
+                      'Locking Booking Snapshot...'
+                    ) : (
+                      <>
+                        <span>✓</span>
+                        Confirm Pool Ride · ₹{joinedPoolRide.passengerFare?.finalFare || joinedPoolRide.passengerFare?.totalPayableFare || joinedPoolRide.fare || '—'}
+                      </>
+                    )}
+                  </button>
+
                   <button
                     type="button"
                     onClick={handleRefreshJoinedRide}

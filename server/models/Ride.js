@@ -44,6 +44,14 @@ const passengerSchema = new mongoose.Schema(
     detourCost: {
       type: Number,
       default: 0
+    },
+    status: {
+      type: String,
+      enum: ['joined', 'confirmed'],
+      default: 'joined'
+    },
+    confirmedAt: {
+      type: Date
     }
   }
 );

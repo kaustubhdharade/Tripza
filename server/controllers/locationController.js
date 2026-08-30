@@ -1,3 +1,5 @@
+const axios = require('axios');
+
 const PUNE_LOCATIONS = {
   coep: { address: 'COEP Technological University, Pune', latitude: 18.5293, longitude: 73.8565 },
   shivajinagar: { address: 'Shivajinagar Railway Station, Pune', latitude: 18.5314, longitude: 73.8446 },
@@ -50,6 +52,7 @@ function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
 }
 
 const geocodeLocation = async (req, res) => {
+  console.log("ORS_KEY Loaded:", !!process.env.ORS_API_KEY);
   const { address } = req.body;
 
   // Validate that address is provided
@@ -72,27 +75,26 @@ const geocodeLocation = async (req, res) => {
   }
 
   try {
-    const url = `https://api.openrouteservice.org/geocode/search?api_key=${apiKey}&text=${encodeURIComponent(address)}&size=1`;
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      const loc = getFallbackLocation(address);
-      return res.status(200).json({
-        success: true,
-        location: loc,
-        isFallback: true
-      });
-    }
+    const response = await axios.get('https://api.openrouteservice.org/geocode/search', {
+      params: {
+        api_key: apiKey,
+        text: address
+      }
+    });
 
-    const data = await response.json();
+    const data = response.data;
 
     if (data.features && data.features.length > 0) {
       const feature = data.features[0];
       const [longitude, latitude] = feature.geometry.coordinates;
       const formattedAddress = feature.properties.label || feature.properties.name || address;
       
+      console.log(`[ORS API SUCCESS] Geocoded "${address}" -> Lat: ${latitude}, Lng: ${longitude}`);
+
       return res.status(200).json({
         success: true,
+        source: 'ORS_API',
+        isFallback: false,
         location: {
           address: formattedAddress,
           latitude: latitude,
@@ -100,6 +102,7 @@ const geocodeLocation = async (req, res) => {
         }
       });
     } else {
+      console.log('[ORS API WARN] No features returned for address:', address, '- using fallback');
       const loc = getFallbackLocation(address);
       return res.status(200).json({
         success: true,
@@ -108,6 +111,7 @@ const geocodeLocation = async (req, res) => {
       });
     }
   } catch (error) {
+    console.error('ORS Geocode API Error:', error.response?.data || error.message || error);
     const loc = getFallbackLocation(address);
     return res.status(200).json({
       success: true,
@@ -118,6 +122,7 @@ const geocodeLocation = async (req, res) => {
 };
 
 const calculateRoute = async (req, res) => {
+  console.log("ORS_KEY Loaded:", !!process.env.ORS_API_KEY);
   const { pickup, destination } = req.body;
 
   const validateCoordinate = (lat, lng) => {
@@ -175,34 +180,35 @@ const calculateRoute = async (req, res) => {
   }
 
   try {
-    const url = 'https://api.openrouteservice.org/v2/directions/driving-car';
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': apiKey
-      },
-      body: JSON.stringify({
+    const response = await axios.post(
+      'https://api.openrouteservice.org/v2/directions/driving-car',
+      {
         coordinates: [
           [pickup.longitude, pickup.latitude],
           [destination.longitude, destination.latitude]
         ]
-      })
-    });
+      },
+      {
+        headers: {
+          'Authorization': apiKey,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
 
-    if (!response.ok) {
-      return fallbackRoute();
-    }
-
-    const data = await response.json();
+    const data = response.data;
 
     if (data.routes && data.routes.length > 0) {
       const route = data.routes[0];
       const distanceInKm = route.summary.distance / 1000;
       const durationInMins = route.summary.duration / 60;
 
+      console.log(`[ORS API SUCCESS] Route calculated -> Distance: ${distanceInKm.toFixed(1)} km, Duration: ${Math.round(durationInMins)} min`);
+
       return res.status(200).json({
         success: true,
+        source: 'ORS_API',
+        isFallback: false,
         distance: distanceInKm,
         duration: durationInMins,
         geometry: route.geometry || null,
@@ -213,9 +219,11 @@ const calculateRoute = async (req, res) => {
         }
       });
     } else {
+      console.log('[ORS API WARN] No routes returned between coordinates - using fallback');
       return fallbackRoute();
     }
   } catch (error) {
+    console.error('ORS CalculateRoute API Error:', error.response?.data || error.message || error);
     return fallbackRoute();
   }
 };

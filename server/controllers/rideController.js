@@ -803,12 +803,208 @@ const startPoolRide = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/rides/pool/:rideId/confirm
+ * Authenticated — locks in and confirms the passenger's joined pool ride booking snapshot.
+ */
+const confirmPoolRide = async (req, res) => {
+  try {
+    const { rideId } = req.params;
+    const userId = req.user.userId || req.user.id || req.user._id;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'User identity could not be determined from token'
+      });
+    }
+
+    const ride = await Ride.findById(rideId);
+    if (!ride) {
+      return res.status(404).json({
+        success: false,
+        message: 'Pool ride not found'
+      });
+    }
+
+    if (ride.rideType !== 'pool') {
+      return res.status(400).json({
+        success: false,
+        message: 'This ride is not a pool ride'
+      });
+    }
+
+    // Find passenger in ride
+    const passengerIndex = (ride.passengers || []).findIndex(
+      p => p.user && (p.user.toString() === userId.toString() || (p.user._id && p.user._id.toString() === userId.toString()))
+    );
+
+    if (passengerIndex === -1) {
+      return res.status(400).json({
+        success: false,
+        message: 'You have not joined this pool ride yet'
+      });
+    }
+
+    const passenger = ride.passengers[passengerIndex];
+
+    // Lock in pricing snapshot (from existing fareBreakdown or request body if provided)
+    const lockedSnapshot = req.body?.fareBreakdown || passenger.fareBreakdown || {};
+    const finalFare = lockedSnapshot.finalFare || passenger.fare || lockedSnapshot.totalPayableFare || 0;
+
+    passenger.status = 'confirmed';
+    passenger.confirmedAt = new Date();
+    passenger.fare = finalFare;
+    passenger.fareBreakdown = lockedSnapshot;
+
+    await ride.save();
+    await ride.populate('driver', 'name email');
+    await ride.populate('passengers.user', 'name email');
+
+    const confirmedPassenger = ride.passengers[passengerIndex];
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pool ride confirmed successfully',
+      confirmedBooking: {
+        rideId: ride._id,
+        userId: userId,
+        driver: ride.driver ? { id: ride.driver._id, name: ride.driver.name, email: ride.driver.email } : null,
+        pickup: confirmedPassenger.pickup,
+        destination: confirmedPassenger.destination,
+        distanceKm: lockedSnapshot.distanceKm || ride.distanceKm,
+        finalFare: confirmedPassenger.fare,
+        fareBreakdown: confirmedPassenger.fareBreakdown,
+        segmentBreakdown: lockedSnapshot.segmentsUsed || ride.segmentsBreakdown || [],
+        driverIncentiveContribution: lockedSnapshot.driverIncentive || 0,
+        status: confirmedPassenger.status,
+        confirmedAt: confirmedPassenger.confirmedAt
+      }
+    });
+  } catch (error) {
+    console.error('confirmPoolRide error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error confirming pool ride'
+    });
+  }
+};
+
+/**
+ * GET /api/rides/driver/active
+ * Authenticated (Driver) — fetches the driver's active pool ride with updated passengers,
+ * calculated driver incentive, total driver earnings, available seats, and segment breakdown.
+ */
+const getDriverActiveRide = async (req, res) => {
+  try {
+    const driverId = req.user.userId || req.user.id || req.user._id;
+    if (!driverId) {
+      return res.status(401).json({
+        success: false,
+        message: 'User identity could not be determined from token'
+      });
+    }
+
+    const ride = await Ride.findOne({
+      driver: driverId,
+      rideType: 'pool',
+      status: 'active'
+    })
+      .populate('driver', 'name email')
+      .populate('passengers.user', 'name email')
+      .sort({ createdAt: -1 });
+
+    if (!ride) {
+      return res.status(200).json({
+        success: true,
+        message: 'No active pool ride found for this driver',
+        ride: null
+      });
+    }
+
+    // Recalculate pool fares to ensure driver earnings, incentives, and segments are up to date
+    const calculationPassengers = (ride.passengers || []).map(p => ({
+      user: p.user ? (p.user._id || p.user) : p.user,
+      pickup: p.pickup,
+      destination: p.destination,
+      joinedAt: p.joinedAt,
+      detourKm: p.detourKm || 0,
+      detourCost: p.detourCost || 0
+    }));
+
+    const fareResult = calculatePoolFares(
+      {
+        pickup: ride.pickup,
+        destination: ride.destination,
+        distanceKm: ride.distanceKm,
+        fare: ride.fare,
+        routeGeometry: ride.routeGeometry
+      },
+      calculationPassengers
+    );
+
+    if (fareResult) {
+      ride.driverIncentive = fareResult.totalDriverIncentive;
+      ride.driverEarnings = fareResult.driverTotalEarnings;
+      ride.segmentsBreakdown = fareResult.segments;
+      await ride.save();
+    }
+
+    const passengerCount = ride.passengers ? ride.passengers.length : 0;
+    const maxCapacity = ride.maxPassengers || 5;
+    const availableSeats = Math.max(0, maxCapacity - passengerCount);
+
+    return res.status(200).json({
+      success: true,
+      ride: {
+        id: ride._id,
+        driver: ride.driver ? { id: ride.driver._id, name: ride.driver.name, email: ride.driver.email } : null,
+        pickup: ride.pickup,
+        destination: ride.destination,
+        distanceKm: ride.distanceKm,
+        durationMinutes: ride.durationMinutes,
+        currentPassengerCount: passengerCount,
+        maxPassengerCapacity: maxCapacity,
+        availableSeats,
+        status: ride.status,
+        driverIncentive: ride.driverIncentive || 0,
+        driverEarnings: ride.driverEarnings || 0,
+        createdAt: ride.createdAt,
+        segments: ride.segmentsBreakdown || [],
+        passengers: ride.passengers
+          ? ride.passengers.map(p => ({
+              user: p.user
+                ? { id: p.user._id || p.user.id || p.user, name: p.user.name || 'Passenger', email: p.user.email || '' }
+                : null,
+              pickup: p.pickup,
+              destination: p.destination,
+              fare: p.fare,
+              fareBreakdown: p.fareBreakdown,
+              status: p.status || 'joined',
+              joinedAt: p.joinedAt
+            }))
+          : []
+      }
+    });
+  } catch (error) {
+    console.error('getDriverActiveRide error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error fetching driver active ride'
+    });
+  }
+};
+
 module.exports = {
   bookPersonalRide,
   getActivePoolRides,
   joinPoolRide,
+  confirmPoolRide,
   startPoolRide,
+  getDriverActiveRide,
   isRouteCompatible,
   segmentPoolRoute,
   calculatePoolFares
 };
+
+
